@@ -508,7 +508,7 @@ const SECTIONS = [
   {y0:340,   y1:1090, t:'1-2-1',       ko:'만남의 문 · 손을 맞잡을 때 닫혀요'},
   {y0:1090,  y1:1675, t:'EDUCATION',   ko:'온라인 교육 상자'},
   {y0:1675,  y1:2580, t:'REFERRAL',    ko:'소개 릴레이 · 소개 → 연결 → 미팅 → 성사'},
-  {y0:2580,  y1:2930, t:'VISITOR',     ko:'초대 벽돌 깨기 · 여러 번 두드려야 열려요'},
+  {y0:2580,  y1:2930, t:'VISITOR',     ko:'스프링 초대 벽돌 · 두드릴수록 통통 튀어요'},
   {y0:2930,  y1:MAP_BOTTOM, t:'GIVERS GAIN', ko:'최종 깔대기'},
 ];
 const GATES = [
@@ -573,7 +573,7 @@ let statics = [], rotors = [], sliders = [], bricks = [], debris = [], startGate
 function seg(ax,ay,bx,by,o={}){ const s={k:'s',ax,ay,bx,by,t:o.t??4,e:o.e??.3,cls:o.cls||'wall',off:false}; statics.push(s); return s; }
 function peg(x,y,r=5,o={}){ const c={k:'c',x,y,r,e:o.e??.45,cls:o.cls||'peg',boost:o.boost||0,hit:0}; statics.push(c); return c; }
 function door(y, ph){ for (const side of ['L','R']) sliders.push({k:'sl', side, y, base:205, amp:75, w:3.6, ph, t:6, ax:0, ay:y, bx:0, by:y}); }
-const BRICK_HP = 10;
+const BRICK_HP = 14;
 function rotor(cx,cy,len,w,arms=2,t=5){ rotors.push({k:'r',cx,cy,len,w,arms,t,ang:Math.random()*Math.PI}); }
 
 function buildMap(){
@@ -604,7 +604,7 @@ function buildMap(){
   const BL = ['초대','권유','재초대','커피챗','방문','등록'], bw = (WR-WL-8)/BL.length;
   BL.forEach((label,i) => {
     const x0 = WL+4 + i*bw, b = seg(x0+8, BRICK_Y, x0+bw-8, BRICK_Y, {cls:'brick', t:8, e:.35});
-    b.label = label; b.hp = b.max = BRICK_HP; b.flash = 0; bricks.push(b);
+    b.label = label; b.hp = b.max = BRICK_HP; b.flash = 0; b.disp = 0; b.vel = 0; bricks.push(b);
   });
   // 5 · 최종 깔대기
   seg(WL,2960,284,3440); seg(WR,2960,316,3440);
@@ -715,7 +715,7 @@ function step(dt){
       }
     }
     for (const s of bands[b]) {
-      if (s.k === 's') { if (!s.off) { const v = hitSeg(m, s.ax,s.ay,s.bx,s.by, s.t, s.e, null); if (v < -60 && s.cls === 'brick') brickHit(s, v); } }
+      if (s.k === 's') { if (!s.off) { const v = hitSeg(m, s.ax,s.ay,s.bx,s.by, s.t, s.e, null); if (v < 0 && s.cls === 'brick') brickContact(s, m, v); } }
       else hitCirc(m, s);
     }
     const lo = WL+4+R, hi = WR-4-R;
@@ -801,7 +801,7 @@ function spawn(){
   });
 }
 function resetRace(){
-  started = false; winner = null; winners = []; provisional = []; lastLeader = null; finalStart = -1; finalPhase = 0; phaseT = 0; evDone = 0; secondBreak = false; gateFx = null; gateSlowed = [false,false,false,false]; warpFx = []; simT = 0; finished = []; raceReal = 0; raceT = 0; podium = []; order = []; lastLive = '';
+  started = false; winner = null; winners = []; provisional = []; lastLeader = null; finalStart = -1; finalPhase = 0; phaseT = 0; evDone = 0; secondBreak = false; springSaid = false; gateFx = null; gateSlowed = [false,false,false,false]; warpFx = []; simT = 0; finished = []; raceReal = 0; raceT = 0; podium = []; order = []; lastLive = '';
   gateCount = [0,0,0,0]; gateFirst = [null,null,null,null];
   if (startGate) startGate.off = false;
   $('#ranking').innerHTML = ''; $('#winner').hidden = true; confetti = [];
@@ -1041,7 +1041,7 @@ function contention(){
   const idx = targetRank() - finished.length - 1;
   return act[Math.max(0, Math.min(act.length-1, idx))];
 }
-let clearT = 0, secondBreak = false, focus = null, slow = 1, finalZone = false, finalStart = -1, finalPhase = 0, phaseT = 0, evDone = 0, gateFx = null, gateSlowed = [false,false,false,false], warpFx = [];
+let springSaid = false, clearT = 0, secondBreak = false, focus = null, slow = 1, finalZone = false, finalStart = -1, finalPhase = 0, phaseT = 0, evDone = 0, gateFx = null, gateSlowed = [false,false,false,false], warpFx = [];
 function flashGate(g, lead){
   const box = $('#flash'), gt = GATES[g];
   const q = quip(lead.p, GATE_TOPIC[gt.key]);
@@ -1050,6 +1050,21 @@ function flashGate(g, lead){
   clearTimeout(flashGate.t); flashGate.t = setTimeout(() => { box.hidden = true; }, 1050);
 }
 /* 초대 벽돌: 결승 단계(두드리기)부터 맞을 때마다 내구도 감소 */
+/* 스프링 벽돌: 처음엔 반동이 거의 없다가, 두드리는 시간이 길어지고 금이 갈수록 탄성이 세짐 */
+function springiness(b){
+  if (finalPhase < 2 || winner) return 0;
+  const pt = raceT - phaseT;
+  return Math.max(0, Math.min(1, .55*(pt/SCRAMBLE) + .6*(1 - b.hp/b.max) - .12));
+}
+function brickContact(b, m, v){
+  if (v < -60) { b.vel += Math.min(1, -v/500)*40; brickHit(b, v); }
+  const sp = springiness(b);
+  if (sp > .08 && m.vy > -40) {
+    m.vy = -(110 + 420*sp)*(.75 + Math.random()*.25);
+    m.vx += (Math.random() - .5)*90*sp;
+    b.vel += 10 + 30*sp;
+  }
+}
 function brickHit(b, v){
   b.flash = 1;
   if (finalPhase < 2 || winner) return;
@@ -1147,6 +1162,7 @@ function updateCamera(){
       if (pool >= need || pt > GATHER_MAX) { finalPhase = 2; phaseT = raceT; evDone = 0; toast('두드려라! 초대 벽돌 깨기 시작'); }
     } else if (finalPhase === 2) {
       if (evDone < SCRAMBLE_EVENTS.length && pt > SCRAMBLE_EVENTS[evDone]) { finalEvent(evDone); evDone++; }
+      if (!springSaid && pt > SCRAMBLE*.45) { springSaid = true; toast('스프링이 살아난다! 통통 튀기 시작'); }
       if (pt > SCRAMBLE) breakBrick(weakestBrick());
     } else if (finalPhase === 3 && !secondBreak && pt > .9) { secondBreak = true; breakBrick(weakestBrick()); }
   }
@@ -1265,13 +1281,24 @@ function draw(){
   for (const b of bricks) {
     if (b.off || BRICK_Y < top - 20 || BRICK_Y > bot + 20) continue;
     b.flash *= .85;
-    const x = b.ax - 8, w = b.bx - b.ax + 16, k = b.hp / b.max;
-    ctx.globalAlpha = .45 + .55*k; ctx.fillStyle = S.rotor; rr(x+1, BRICK_Y-9, w-2, 18, 4); ctx.fill(); ctx.globalAlpha = 1;
+    // 스프링 출렁임(보이는 것만): 눌렸다가 되튐
+    b.vel += (-90*b.disp - 5*b.vel)*.016; b.disp += b.vel*.016;
+    b.disp = Math.max(-6, Math.min(9, b.disp));
+    const x = b.ax - 8, w = b.bx - b.ax + 16, k = b.hp / b.max, Y = BRICK_Y + b.disp;
+    const sp = springiness(b);
+    ctx.strokeStyle = S.hub; ctx.globalAlpha = .5 + .5*sp; ctx.lineWidth = 2;
+    for (const cx of [x + w*.28, x + w*.72]) {
+      const y0 = Y + 9, y1 = BRICK_Y + 44, n = 6;
+      ctx.beginPath(); ctx.moveTo(cx, y0);
+      for (let i = 1; i <= n; i++) ctx.lineTo(cx + (i === n ? 0 : (i%2 ? 7 : -7)), y0 + (y1 - y0)*i/n);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = .45 + .55*k; ctx.fillStyle = S.rotor; rr(x+1, Y-9, w-2, 18, 4); ctx.fill(); ctx.globalAlpha = 1;
     if (S.outline) { ctx.lineWidth = 2; ctx.strokeStyle = S.olColor; ctx.stroke(); }
-    if (b.flash > .05) { ctx.fillStyle = `rgba(255,255,255,${b.flash*.6})`; rr(x+1, BRICK_Y-9, w-2, 18, 4); ctx.fill(); }
-    if (k < .7) { ctx.strokeStyle = 'rgba(0,0,0,.45)'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.moveTo(x+w*.3, BRICK_Y-9); ctx.lineTo(x+w*.38, BRICK_Y-1); ctx.lineTo(x+w*.32, BRICK_Y+9); if (k < .4) { ctx.moveTo(x+w*.7, BRICK_Y-9); ctx.lineTo(x+w*.62, BRICK_Y); ctx.lineTo(x+w*.7, BRICK_Y+9); } ctx.stroke(); }
+    if (b.flash > .05) { ctx.fillStyle = `rgba(255,255,255,${b.flash*.6})`; rr(x+1, Y-9, w-2, 18, 4); ctx.fill(); }
+    if (k < .7) { ctx.strokeStyle = 'rgba(0,0,0,.45)'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.moveTo(x+w*.3, Y-9); ctx.lineTo(x+w*.38, Y-1); ctx.lineTo(x+w*.32, Y+9); if (k < .4) { ctx.moveTo(x+w*.7, Y-9); ctx.lineTo(x+w*.62, Y); ctx.lineTo(x+w*.7, Y+9); } ctx.stroke(); }
     ctx.fillStyle = '#FFFFFF'; ctx.font = `800 11px "${S.label}", sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText(`${b.label} ${Math.max(0,b.hp)}`, x + w/2, BRICK_Y + .5);
+    ctx.fillText(`${b.label} ${Math.max(0,b.hp)}`, x + w/2, Y + .5);
   }
   debris = debris.filter(d => (d.l -= .02) > 0);
   for (const d of debris) { d.vy += 14; d.x += d.vx/60; d.y += d.vy/60; ctx.globalAlpha = d.l; ctx.fillStyle = S.rotor; ctx.fillRect(d.x-3, d.y-3, 6, 6); }
