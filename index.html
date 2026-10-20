@@ -375,7 +375,7 @@ function setSkin(k){
   document.documentElement.dataset.skin = k;
   try { localStorage.setItem('bni-roulette-skin', k); } catch(e){}
   persons.forEach((p,i) => p.color = S.marbles[i % S.marbles.length]);
-  widthCache.clear();
+  widthCache.clear(); spriteCache.clear(); labelCache.clear();
   renderSkins(); renderRoster(); rebuildRankingColors();
 }
 
@@ -672,7 +672,9 @@ function hitCirc(m,c){
   m.x += nx*(RR-d); m.y += ny*(RR-d);
   if (resolve(m,nx,ny,c.e,0,0) && c.boost) { m.vx += nx*c.boost; m.vy += ny*c.boost; c.hit = 1; }
 }
-const grid = new Map();
+const actBuf = [], CELL_BUCKETS = 4096, cellHead = new Int32Array(CELL_BUCKETS);
+let cellNext = new Int32Array(1024);
+const cellHash = (gx, gy) => (Math.imul(gx, 73856093) ^ Math.imul(gy, 19349663)) & (CELL_BUCKETS - 1);
 function step(dt){
   simT += dt;
   for (const r of rotors) r.ang += r.w*dt;
@@ -680,7 +682,7 @@ function step(dt){
     const L = d.base + d.amp*Math.sin(simT*d.w + d.ph);
     if (d.side === 'L') { d.ax = WL+4; d.bx = WL+4+L; } else { d.ax = WR-4-L; d.bx = WR-4; }
   }
-  const act = [];
+  const act = actBuf; act.length = 0;
   for (const m of marbles) if (!m.done) act.push(m);
   for (const m of act) {
     m.vy += G*dt; m.vx *= .9997;
@@ -688,19 +690,22 @@ function step(dt){
     m.x += m.vx*dt; m.y += m.vy*dt;
   }
   // 구슬끼리
-  grid.clear(); const cs = 2*R;
+  const cs = 2*R;
+  if (cellNext.length < act.length) cellNext = new Int32Array(act.length*2);
+  cellHead.fill(-1);
   for (let i = 0; i < act.length; i++) {
     const m = act[i]; m.gx = Math.floor(m.x/cs); m.gy = Math.floor(m.y/cs);
-    const key = (m.gy+4000)*128 + m.gx; let a = grid.get(key); if (!a) grid.set(key, a = []); a.push(i);
+    const h = cellHash(m.gx, m.gy); cellNext[i] = cellHead[h]; cellHead[h] = i;
   }
   const min2 = cs*cs;
   for (let i = 0; i < act.length; i++) {
     const a = act[i];
     for (let oy = -1; oy <= 1; oy++) for (let ox = -1; ox <= 1; ox++) {
-      const arr = grid.get((a.gy+oy+4000)*128 + a.gx+ox); if (!arr) continue;
-      for (const j of arr) {
+      const gx = a.gx+ox, gy = a.gy+oy;
+      for (let j = cellHead[cellHash(gx, gy)]; j !== -1; j = cellNext[j]) {
         if (j <= i) continue;
-        const b = act[j]; let dx = b.x-a.x, dy = b.y-a.y; const d2 = dx*dx+dy*dy;
+        const b = act[j]; if (b.gx !== gx || b.gy !== gy) continue;
+        let dx = b.x-a.x, dy = b.y-a.y; const d2 = dx*dx+dy*dy;
         if (d2 >= min2 || d2 < 1e-9) continue;
         const d = Math.sqrt(d2); dx /= d; dy /= d; const p = (cs-d)/2;
         a.x -= dx*p; a.y -= dy*p; b.x += dx*p; b.y += dy*p;
@@ -1006,7 +1011,7 @@ document.addEventListener('drop', e => { const f = e.dataTransfer && e.dataTrans
 const cv = $('#cv'), ctx = cv.getContext('2d');
 let cw = 0, ch = 0, dpr = 1, scale = 1, baseScale = 1, zoom = 1, viewH = 600, viewW = 640, camY = 200, camX = 300, manualUntil = 0, shakeT = 0;
 function resize(){
-  const r = cv.getBoundingClientRect(); dpr = Math.min(2, window.devicePixelRatio || 1);
+  const r = cv.getBoundingClientRect(); dpr = Math.min(1.5, window.devicePixelRatio || 1);  // 약한 노트북·프로젝터에서도 부드럽게
   cw = r.width; ch = r.height; cv.width = Math.round(cw*dpr); cv.height = Math.round(ch*dpr);
   baseScale = Math.min(cw/640, ch/520); scale = baseScale*zoom; viewH = ch/scale; viewW = cw/scale;
 }
@@ -1213,7 +1218,53 @@ function updateCamera(){
   camY = Math.max(-1600, Math.min(MAP_BOTTOM + 20 - viewH/2, camY));
 }
 
-const widthCache = new Map();
+let spriteBudget = 10;
+const widthCache = new Map(), spriteCache = new Map(), labelCache = new Map(), vigCache = new Map();
+function marbleSprite(p, rpx){
+  const key = p.color + '|' + (p.light || '') + '|' + skinKey + '|' + rpx;
+  let c = spriteCache.get(key); if (c) return c;
+  if (spriteBudget <= 0 && p._ms && p._ms.sk === skinKey) return p._ms;  // 한 프레임에 너무 많이 만들지 않음
+  spriteBudget--;
+  if (spriteCache.size > 600) spriteCache.clear();
+  const pad = 3, size = Math.ceil(rpx*2 + pad*2), u = rpx / R, g2 = (c = document.createElement('canvas')).getContext('2d');
+  c.width = c.height = size; const cx = size/2;
+  g2.fillStyle = p.color; g2.beginPath(); g2.arc(cx, cx, rpx, 0, 7); g2.fill();
+  if (S.outline) { g2.lineWidth = 1.6*u; g2.strokeStyle = S.olColor; g2.stroke(); }
+  else if (p.light) { g2.lineWidth = 2*u; g2.strokeStyle = TL[p.light].bg; g2.stroke(); }
+  g2.fillStyle = 'rgba(255,255,255,.55)'; g2.beginPath(); g2.arc(cx - rpx*.35, cx - rpx*.38, rpx*.3, 0, 7); g2.fill();
+  c.half = (size/2)/u; c.sk = skinKey; p._ms = c;
+  spriteCache.set(key, c); return c;
+}
+function labelSprite(p, K){
+  const key = p.name + '|' + (p.light || '') + '|' + skinKey + '|' + K + '|' + dpr;
+  let c = labelCache.get(key); if (c) return c;
+  if (spriteBudget <= 0 && p._ls && p._ls.sk === skinKey) return p._ls;
+  spriteBudget--;
+  if (labelCache.size > 800) labelCache.clear();
+  c = document.createElement('canvas'); const g2 = c.getContext('2d');
+  const font = `700 ${11.5*K}px "${S.label}", sans-serif`; g2.font = font;
+  const tw = g2.measureText(p.name).width, h = 16*K, padX = 8*K, total = tw + padX*2;
+  c.w = total + 4; c.h = h + 4;
+  c.width = Math.ceil(c.w*dpr); c.height = Math.ceil(c.h*dpr);
+  g2.scale(dpr, dpr); g2.translate(2, 2);
+  const t = TL[p.light];
+  g2.fillStyle = t ? t.bg : S.chip; g2.beginPath();
+  if (g2.roundRect) g2.roundRect(0, 0, total, h, h/2); else g2.rect(0, 0, total, h);
+  g2.fill();
+  if (S.outline) { g2.lineWidth = 1.5; g2.strokeStyle = S.olColor; g2.stroke(); }
+  g2.font = font; g2.textBaseline = 'middle'; g2.textAlign = 'left'; g2.fillStyle = t ? t.fg : S.chipInk;
+  g2.fillText(p.name, padX, h/2 + .5);
+  c.K = K; c.sk = skinKey; p._ls = c;
+  labelCache.set(key, c); return c;
+}
+function vignetteSprite(a){
+  let c = vigCache.get(a); if (c) return c;
+  c = document.createElement('canvas'); c.width = c.height = 256; const g2 = c.getContext('2d');
+  const gr = g2.createRadialGradient(128, 128, 10, 128, 128, 128);
+  gr.addColorStop(0, 'rgba(0,0,0,0)'); gr.addColorStop(1, `rgba(0,0,0,${a})`);
+  g2.fillStyle = gr; g2.fillRect(0, 0, 256, 256);
+  vigCache.set(a, c); return c;
+}
 function rr(x,y,w,h,r){ ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(x,y,w,h,r); else ctx.rect(x,y,w,h); }
 
 function draw(){
@@ -1368,14 +1419,13 @@ function draw(){
   }
 
   // 구슬
-  const vis = [];
+  spriteBudget = 10;
+  const vis = [], rpx = Math.max(2, Math.round(R*scale*dpr));
   for (const m of marbles) {
     if (m.done || m.y < top || m.y > bot) continue;
     vis.push(m);
-    ctx.fillStyle = m.p.color; ctx.beginPath(); ctx.arc(m.x, m.y, R, 0, 7); ctx.fill();
-    if (S.outline) { ctx.lineWidth = 1.6; ctx.strokeStyle = S.olColor; ctx.stroke(); }
-    else if (m.p.light) { ctx.lineWidth = 2; ctx.strokeStyle = TL[m.p.light].bg; ctx.stroke(); }
-    ctx.fillStyle = 'rgba(255,255,255,.55)'; ctx.beginPath(); ctx.arc(m.x-R*.35, m.y-R*.38, R*.3, 0, 7); ctx.fill();
+    const sp = marbleSprite(m.p, rpx);
+    ctx.drawImage(sp, m.x - sp.half, m.y - sp.half, sp.half*2, sp.half*2);
   }
   const pulse = (Math.sin(performance.now()/160)+1)/2;
   podium.forEach(({m}, i) => {
@@ -1409,9 +1459,13 @@ function draw(){
   if (spot) {
     const lx = ox + spot.m.x*scale, ly = oy + spot.m.y*scale;
     const dark = ['b','d'].includes(skinKey);
-    const g = ctx.createRadialGradient(lx, ly, 60, lx, ly, Math.max(cw,ch)*.75);
-    g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, `rgba(0,0,0,${dark ? .55 : .3})`);
-    ctx.fillStyle = g; ctx.fillRect(0, 0, cw, ch);
+    const Rv = Math.max(cw,ch)*.75, a = dark ? .55 : .3;
+    ctx.drawImage(vignetteSprite(a), lx - Rv, ly - Rv, Rv*2, Rv*2);
+    ctx.fillStyle = `rgba(0,0,0,${a})`;
+    if (ly - Rv > 0) ctx.fillRect(0, 0, cw, ly - Rv);
+    if (ly + Rv < ch) ctx.fillRect(0, ly + Rv, cw, ch - ly - Rv);
+    if (lx - Rv > 0) ctx.fillRect(0, Math.max(0, ly - Rv), lx - Rv, Rv*2);
+    if (lx + Rv < cw) ctx.fillRect(lx + Rv, Math.max(0, ly - Rv), cw - lx - Rv, Rv*2);
   }
   let labelSet = vis;
   if (vis.length > 140) { const seen = new Set(); labelSet = vis.slice().sort((a,b)=>b.y-a.y).filter(m => !seen.has(m.p) && seen.add(m.p)); }
@@ -1422,17 +1476,12 @@ function draw(){
     // 이름표 높이 = 공 지름(최소 18px), 이름표 아래 끝이 공의 절반 높이에 오도록
     const G = Math.max(1.15, 2*R*scale/16), mi0 = medalOf.get(m), K = G*(mi0 === 0 ? 1.15 : mi0 != null ? 1.06 : 1);
     ctx.globalAlpha = spot && mi0 == null ? .6 : 1;
-    ctx.font = `700 ${fs}px "${S.label}", sans-serif`;
-    let tw0 = widthCache.get(m.p.name); if (tw0 == null) { tw0 = ctx.measureText(m.p.name).width; widthCache.set(m.p.name, tw0); }
-    const tw = tw0*K;
+    const lab = labelSprite(m.p, Math.round(K*10)/10), f = K/lab.K, lw = lab.w*f, lh = lab.h*f;
     const px = ox + m.x*scale, py = oy + m.y*scale - 8*K;
-    const h = 16*K, padX = 8*K, total = tw + padX*2, x0 = px - total/2, y0 = py - h/2;
-    const t = TL[m.p.light];
-    ctx.fillStyle = t ? t.bg : S.chip; rr(x0, y0, total, h, h/2); ctx.fill();
-    if (S.outline) { ctx.lineWidth = 1.5; ctx.strokeStyle = S.olColor; ctx.stroke(); }
-    ctx.fillStyle = t ? t.fg : S.chipInk; ctx.font = `700 ${fs*K}px "${S.label}", sans-serif`; ctx.textAlign = 'left';
-    ctx.fillText(m.p.name, x0 + padX, py+.5);
+    const h = 16*K, x0 = px - lw/2 + 2*f, y0 = py - h/2;
+    ctx.drawImage(lab, px - lw/2, py - lh/2, lw, lh);
     if (mi0 != null) {
+      ctx.textBaseline = 'middle';
       const rM = 9*K;
       ctx.fillStyle = MEDAL[mi0]; ctx.beginPath(); ctx.arc(x0 - rM - 2, py, rM, 0, 7); ctx.fill();
       ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(0,0,0,.35)'; ctx.stroke();
@@ -1457,17 +1506,29 @@ function drawMini(){
   const k = Math.min((ch - 76)/span, 64/W);
   mm = {x:10, y:10, w:W*k, h:span*k, k, top:spanTop};
   const X = x => mm.x + x*k, Y = y => mm.y + (y-spanTop)*k;
-  ctx.fillStyle = S.mini; rr(mm.x-3, mm.y-3, mm.w+6, mm.h+6, 6); ctx.fill();
-  ctx.strokeStyle = S.miniWall; ctx.lineWidth = 1; ctx.beginPath();
-  for (const s of statics) if (s.k === 's' && !s.off) { ctx.moveTo(X(s.ax), Y(Math.max(spanTop, s.ay))); ctx.lineTo(X(s.bx), Y(Math.max(spanTop, s.by))); }
-  ctx.stroke();
-  for (const r of rotors) { ctx.beginPath(); ctx.arc(X(r.cx), Y(r.cy), r.len*k, 0, 7); ctx.stroke(); }
-  ctx.fillStyle = S.gate; GATES.forEach(g => ctx.fillRect(X(WL), Y(g.y), (WR-WL)*k, 1));
+  // 고정된 부분(벽·회전판·관문선)은 바뀔 때만 다시 그림
+  let off = 0; for (const s of statics) if (s.off) off++;
+  const key = `${skinKey}|${cw}|${ch}|${dpr}|${off}|${statics.length}`;
+  if (miniCache.key !== key) {
+    const c = miniCache.c || (miniCache.c = document.createElement('canvas'));
+    c.width = Math.ceil((mm.x + mm.w + 6)*dpr); c.height = Math.ceil((mm.y + mm.h + 6)*dpr);
+    const g2 = c.getContext('2d'); g2.setTransform(dpr,0,0,dpr,0,0); g2.clearRect(0, 0, c.width, c.height);
+    g2.fillStyle = S.mini; g2.beginPath(); if (g2.roundRect) g2.roundRect(mm.x-3, mm.y-3, mm.w+6, mm.h+6, 6); else g2.rect(mm.x-3, mm.y-3, mm.w+6, mm.h+6); g2.fill();
+    g2.strokeStyle = S.miniWall; g2.lineWidth = 1; g2.beginPath();
+    for (const s of statics) if (s.k === 's' && !s.off) { g2.moveTo(X(s.ax), Y(Math.max(spanTop, s.ay))); g2.lineTo(X(s.bx), Y(Math.max(spanTop, s.by))); }
+    g2.stroke();
+    for (const r of rotors) { g2.beginPath(); g2.arc(X(r.cx), Y(r.cy), r.len*k, 0, 7); g2.stroke(); }
+    g2.fillStyle = S.gate; GATES.forEach(g => g2.fillRect(X(WL), Y(g.y), (WR-WL)*k, 1));
+    miniCache.key = key;
+  }
+  ctx.drawImage(miniCache.c, 0, 0, miniCache.c.width/dpr, miniCache.c.height/dpr);
   for (const m of marbles) { if (m.done || m.y < spanTop) continue; ctx.fillStyle = m.p.color; ctx.fillRect(X(m.x)-1, Y(m.y)-1, 2.4, 2.4); }
   ctx.strokeStyle = S.rotor; ctx.lineWidth = 1.5;
   ctx.strokeRect(X(Math.max(0, camX - viewW/2)), Y(camY - viewH/2), Math.min(W, viewW)*k, viewH*k);
-  $('#live').style.left = (mm.x + mm.w + 14) + 'px';
+  const ll = (mm.x + mm.w + 14) + 'px';
+  if (liveLeft !== ll) { liveLeft = ll; $('#live').style.left = ll; }
 }
+const miniCache = {key:'', c:null}; let liveLeft = '';
 
 let confetti = [];
 const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -1521,7 +1582,7 @@ document.documentElement.dataset.skin = skinKey;
 renderSkins();
 rebuild();
 resize();
-(document.fonts ? document.fonts.ready : Promise.resolve()).then(() => widthCache.clear());
+(document.fonts ? document.fonts.ready : Promise.resolve()).then(() => { widthCache.clear(); labelCache.clear(); });
 requestAnimationFrame(frame);
 })();
 </script>
