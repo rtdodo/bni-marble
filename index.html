@@ -135,7 +135,7 @@ canvas{display:block;width:100%;height:100%;touch-action:none;cursor:grab}
 .ranking .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ranking .d{width:9px;height:9px;border-radius:50%}
 .ranking .head{display:block;font-size:11px;font-weight:700;letter-spacing:.08em;color:var(--muted);padding:2px 4px 4px}
-.toasts{position:absolute;bottom:64px;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;gap:6px;align-items:center;pointer-events:none;width:min(90%,420px)}
+.toasts{position:absolute;top:12px;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;gap:6px;align-items:center;pointer-events:none;width:min(90%,420px)}
 .toast{background:var(--ink);color:var(--bg);padding:7px 14px;border-radius:14px;font-size:13px;font-weight:600;box-shadow:var(--shadow);animation:tin .25s ease-out;text-align:center;max-width:100%}
 .toast em{font-style:normal;color:var(--accent)}
 :root[data-skin="a"] .toast em,:root[data-skin="c"] .toast em,:root[data-skin="e"] .toast em{color:#FF6B76}
@@ -157,16 +157,19 @@ canvas{display:block;width:100%;height:100%;touch-action:none;cursor:grab}
 @keyframes flash{0%{opacity:0;transform:translate(-50%,-50%) scale(1.5)}14%{opacity:1;transform:translate(-50%,-50%) scale(1)}78%{opacity:1}100%{opacity:0;transform:translate(-50%,-60%) scale(.98)}}
 @keyframes tin{from{transform:translateY(-8px);opacity:0}to{transform:none;opacity:1}}
 
-.winner{position:absolute;inset:0;display:grid;place-items:center;padding:16px;background:rgba(0,0,0,.28)}
-.win-card{max-height:100%;overflow:auto;width:min(440px,100%);background:var(--surface);border:var(--bw) solid var(--bc);border-radius:var(--radius);box-shadow:var(--shadow);padding:22px;display:flex;flex-direction:column;gap:12px;text-align:center;backdrop-filter:var(--blur);animation:pop .4s cubic-bezier(.2,1.4,.4,1)}
+.winner{position:absolute;top:12px;left:12px;right:204px;display:flex;justify-content:center;pointer-events:none}
+.winner .win-card{pointer-events:auto}
+.win-count{margin:0;font-size:13px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--muted)}
+.win-count b{color:var(--accent);font-size:16px}
+.win-card{max-height:min(62vh,560px);overflow:auto;width:min(440px,100%);background:var(--surface);border:var(--bw) solid var(--bc);border-radius:var(--radius);box-shadow:var(--shadow);padding:22px;display:flex;flex-direction:column;gap:12px;text-align:center;backdrop-filter:var(--blur);animation:pop .4s cubic-bezier(.2,1.4,.4,1)}
 :root[data-skin="c"] .win-card{background:rgba(255,255,255,.88)}
 .win-card.two{width:min(760px,100%)}
 .win-list{display:grid;gap:14px}
 .win-card.two .win-list{grid-template-columns:repeat(2,minmax(0,1fr))}
-.wb{display:flex;flex-direction:column;gap:9px;align-items:center;padding:14px;border-radius:var(--radius-sm);background:var(--surface-2);border:var(--bw) solid var(--bc);min-width:0}
+.wb{display:flex;flex-direction:column;gap:7px;align-items:center;padding:10px 12px;border-radius:var(--radius-sm);background:var(--surface-2);border:var(--bw) solid var(--bc);min-width:0}
 .wb-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:center}
 .wb .md{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font-weight:800;color:#1A1A1A;font-size:14px}
-.wb .wn{font-family:var(--f-display);font-size:38px;line-height:1.1;font-weight:800}
+.wb .wn{font-family:var(--f-display);font-size:30px;line-height:1.1;font-weight:800}
 .wb .wlabel{font-size:12px;color:var(--muted);font-weight:700;letter-spacing:.06em}
 .wb .ttl{background:var(--accent);color:var(--accent-ink);border-radius:999px;padding:4px 13px;font-size:13px;font-weight:700}
 .facts{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:5px;font-size:13px;text-align:left;width:100%}
@@ -189,6 +192,7 @@ canvas{display:block;width:100%;height:100%;touch-action:none;cursor:grab}
 .win-actions{display:flex;gap:8px;justify-content:center;flex-wrap:wrap}
 
 @media (max-width:860px){
+  .winner{right:146px;left:8px;top:8px}
   .live{min-width:0;font-size:12px}
   .live .r{font-size:12.5px}
   .app{height:auto;grid-template-columns:minmax(0,1fr)}
@@ -283,6 +287,7 @@ canvas{display:block;width:100%;height:100%;touch-action:none;cursor:grab}
         <p class="eyebrow" id="winEyebrow">당첨</p>
         <div class="win-list" id="winList"></div>
         <p class="cheer" id="winCheer"></p>
+        <p class="win-count" id="winCount"></p>
         <div class="win-actions">
           <button class="btn" id="againBtn" type="button">같은 명단으로 다시</button>
           <button class="btn primary" id="excludeBtn" type="button">당첨자 빼고 다음 추첨</button>
@@ -852,6 +857,7 @@ function renderGateBoard(){
 }
 const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function toast(html){
+  if (started) return;  // 경기 중엔 관전을 가리는 문구를 띄우지 않음
   const box = $('#toasts'); const t = document.createElement('div'); t.className = 'toast'; t.innerHTML = html;
   box.appendChild(t); while (box.children.length > 3) box.firstChild.remove();
   setTimeout(() => t.remove(), 2800);
@@ -907,6 +913,7 @@ function updateHud(force){
   else if (winner) s = `당첨 확정 · ${winners.map(w => w.m.p.name).join(' · ')}`;
   else s = `진행 중 · ${raceReal.toFixed(1)}초 · 도착 ${finished.length}/${tot}`;
   $('#status').textContent = s;
+  if (winner) $('#winCount').innerHTML = `도착 <b>${finished.length}</b> / ${tot} · 나머지 순위는 계속 매겨지는 중`.replace(' · 나머지 순위는 계속 매겨지는 중', finished.length >= tot ? ' · 모든 순위 확정' : ' · 나머지 순위는 계속 매겨지는 중');
   renderGateBoard();
   renderLive();
 }
@@ -932,7 +939,7 @@ function declare(list){
     </section>`;
   }).join('');
   $('#winCheer').innerHTML = `Givers Gain! 다음 주 <em>${list.map(w => esc(w.m.p.name)).join(' · ')}</em> 대표님의 활동을 응원합니다!`;
-  setTimeout(() => { $('#winner').hidden = false; burst(); }, 500);
+  setTimeout(() => { $('#winner').hidden = false; burst(); updateHud(true); }, 1200);
   updateHud(true);
 }
 
@@ -1043,6 +1050,7 @@ function contention(){
 }
 let springSaid = false, clearT = 0, secondBreak = false, focus = null, slow = 1, finalZone = false, finalStart = -1, finalPhase = 0, phaseT = 0, evDone = 0, gateFx = null, gateSlowed = [false,false,false,false], warpFx = [];
 function flashGate(g, lead){
+  return;  // 경기 중 중앙 배너 없음
   const box = $('#flash'), gt = GATES[g];
   const q = quip(lead.p, GATE_TOPIC[gt.key]);
   box.innerHTML = `<span class="big">GATE ${g+1} · ${gt.label}</span><span class="sub">선두 ${esc(lead.p.name)}${q ? ' · ' + esc(q) : ''}</span>`;
@@ -1110,6 +1118,7 @@ function finalEvent(i, brick){
   say(i === 0 ? '역전 펀치! 초대장 한 번 더' : '역전 펀치! 끈질긴 권유', m);
 }
 function flashFinal(lead){
+  return;  // 경기 중 중앙 배너 없음
   const box = $('#flash');
   box.innerHTML = lead === 'open'
     ? `<span class="big">벽돌 격파!</span><span class="sub">최종 깔대기를 먼저 빠져나가는 1·2등은?</span>`
@@ -1166,7 +1175,7 @@ function updateCamera(){
       if (pt > SCRAMBLE) breakBrick(weakestBrick());
     } else if (finalPhase === 3 && !secondBreak && pt > .9) { secondBreak = true; breakBrick(weakestBrick()); }
   }
-  if (started && winner && bricks.some(b => !b.off) && now - clearT > 400) { clearT = now; breakBrick(weakestBrick(), true); }
+  if (started && winner && bricks.some(b => !b.off) && now - clearT > 1200) { clearT = now; breakBrick(weakestBrick(), true); }
   finalZone = !!(started && !winner && finalPhase > 0);
   $('#stage').classList.toggle('final', finalZone);
   const inGate = gateFx && now < gateFx.until;
@@ -1190,12 +1199,13 @@ function updateCamera(){
     if (m.trail.length > 28) m.trail.splice(0, 2);
   }
   const manual = performance.now() < manualUntil;
+  if (winner) tz = Math.max(1, Math.min(1.5, Math.min(ch/baseScale/620, cw/baseScale/640)));
   if (!manual) zoom += (tz - zoom)*.035;
   scale = baseScale*zoom; viewH = ch/scale; viewW = cw/scale;
   if (viewW >= 640) tx = 300; else tx = Math.max(viewW/2 - 20, Math.min(620 - viewW/2, tx));
   if (!manual) {
     if (!started) ty = 400 - viewH/2;
-    else if (winner) ty = FINISH - viewH*0.25;
+    else if (winner) ty = FINISH - viewH*0.3;  // 깔대기 목~결승선이 카드 아래, 버튼 위에 보이게 고정
     else if (ty == null) ty = focus ? focus.y + viewH*.12 : camY;
     camY += (ty - camY)*.07;
     camX += (tx - camX)*.05;
@@ -1485,7 +1495,7 @@ function frame(now){
   updateCamera();
   const rt = raceT;
   let rate = TIME_BASE;
-  if (winner) rate = TIME_BASE*2;                 // 당첨 화면 뒤에서 나머지 순위를 마저 매김
+  if (winner) rate = TIME_BASE*FINAL_PACE;        // 당첨 뒤에도 같은 속도로 나머지 순위를 매김
   else if (finalPhase >= 2) rate = TIME_BASE*FINAL_PACE;
   if (started && !winner && rt > SAFETY) rate *= 2; // 어딘가 걸려 너무 길어질 때만
   const simDt = el * speed * rate;
