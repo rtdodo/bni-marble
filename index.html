@@ -120,8 +120,12 @@ canvas{display:block;width:100%;height:100%;touch-action:none;cursor:grab}
 .ctrl .btn{background:var(--surface)}
 .ctrl .btn.primary{background:var(--accent);padding:9px 18px;font-size:14.5px}
 .speed{display:inline-flex;border:var(--bw) solid var(--bc);border-radius:var(--radius-sm);overflow:hidden;background:var(--surface);box-shadow:var(--btn-shadow)}
-.speed button{border:0;background:transparent;padding:8px 10px;cursor:pointer;font-weight:600;font-size:13px;font-variant-numeric:tabular-nums}
-.speed button[aria-pressed="true"]{background:var(--ink);color:var(--bg)}
+.speed{align-items:center;gap:6px;padding:0 4px}
+.speed button{border:0;background:transparent;padding:6px 10px;cursor:pointer;font-weight:800;font-size:16px;line-height:1}
+.speed button:hover{background:var(--surface-2)}
+.speed label{font-size:12px;font-weight:700;color:var(--muted)}
+.speed input{width:96px;accent-color:var(--accent)}
+.speed output{min-width:38px;font-weight:700;font-size:13px;font-variant-numeric:tabular-nums;text-align:center}
 .ranking{position:absolute;top:12px;right:12px;width:180px;max-height:calc(100% - 80px);overflow:auto;margin:0;padding:8px;list-style:none;background:var(--surface);border:var(--bw) solid var(--bc);border-radius:var(--radius-sm);box-shadow:var(--shadow);backdrop-filter:var(--blur);font-size:12.5px;display:flex;flex-direction:column;gap:2px}
 .ranking:empty{display:none}
 .ranking li{display:grid;grid-template-columns:26px minmax(0,1fr) auto;gap:6px;align-items:center;padding:2px 4px;border-radius:6px;font-variant-numeric:tabular-nums}
@@ -249,6 +253,7 @@ canvas{display:block;width:100%;height:100%;touch-action:none;cursor:grab}
         </div>
       </div>
       <div class="gates" aria-label="관문 통과 현황" id="gateBoard"></div>
+      <p class="note">진행 속도는 경기장 아래 − / + 버튼이나 키보드 <b>−</b> <b>+</b> 키로 바꿉니다. <b>0</b> 키는 기본(1x · 한 판 약 45초)으로 돌아갑니다. 경기 도중에도 바꿀 수 있어요.</p>
     </section>
   </aside>
 
@@ -261,10 +266,12 @@ canvas{display:block;width:100%;height:100%;touch-action:none;cursor:grab}
     <div class="hud">
       <div class="status" id="status">준비</div>
       <div class="ctrl">
-        <div class="speed" id="speed" role="group" aria-label="속도">
-          <button type="button" data-s="1" aria-pressed="true">1x</button>
-          <button type="button" data-s="2" aria-pressed="false">2x</button>
-          <button type="button" data-s="4" aria-pressed="false">4x</button>
+        <div class="speed" id="speed" role="group" aria-label="진행 속도">
+          <button type="button" id="slower" aria-label="느리게" title="느리게 (− 키)">−</button>
+          <label for="speedRange">속도</label>
+          <input type="range" id="speedRange" min="0.25" max="3" step="0.25" value="1">
+          <output id="speedOut" for="speedRange">1x</output>
+          <button type="button" id="faster" aria-label="빠르게" title="빠르게 (+ 키)">+</button>
         </div>
         <button class="btn" id="shakeBtn" type="button" disabled>흔들기</button>
         <button class="btn" id="resetBtn" type="button">다시 섞기</button>
@@ -623,12 +630,13 @@ const G = 900, DT = 1/240, FR = .002, VMAX = 1400;
 // 1x 기준 약 10초 안에 1등이 들어오도록 시뮬레이션을 빠르게 돌림. 9초가 넘으면 점점 더 가속해 12초 안에 마무리
 // 앞 관문은 짧게, 마지막 GIVERS GAIN 구간은 3초 이상 슬로모션. 11.4초가 넘으면 무조건 가속해 12초 안에 끝냄
 // 총 15초: 관문마다 1.5초 슬로모션, 마지막 비지터 관문 약 5초 슬로모션
-const TIME_BASE = .82, HURRY_AT = 10.4, HARD_STOP = 14.7, GATE_SLOW = .3, GATE_SLOW_MS = 1500;
+// 처음부터 끝까지 같은 속도. 중간 슬로모션·빨리감기·따라잡기 가속 없음. 마지막 벽돌~깔대기만 70% 속도
+const TIME_BASE = .82, FINAL_PACE = .7, SAFETY = 40;
 // FINAL(약 5초): 1 모이기(빠르게) → 2 엎치락뒤치락(슬로 + 역전 이벤트) → 3 문 열림(슬로)
-const GATHER_MAX = .8, GATHER_RATE = 9, SCRAMBLE = 2.0, SCRAMBLE_RATE = .5, RELEASE_RATE = .4, RELEASE_HOLD = 2.4;
+const GATHER_MAX = 1.8, SCRAMBLE = 2.0;
 const SCRAMBLE_EVENTS = [.45, 1.05, 1.6];
 const MEDAL = ['#E9B949','#C9CED6','#D08B52'];
-let raceReal = 0;
+let raceReal = 0, raceT = 0;  // raceReal: 실제 경과(초), raceT: 속도를 반영한 경기 시계
 let R = 9, marbles = [], finished = [], started = false, winner = null, winners = [], provisional = [], simT = 0;
 let gateCount = [0,0,0,0], gateFirst = [null,null,null,null];
 
@@ -793,7 +801,7 @@ function spawn(){
   });
 }
 function resetRace(){
-  started = false; winner = null; winners = []; provisional = []; lastLeader = null; finalStart = -1; finalPhase = 0; phaseT = 0; evDone = 0; secondBreak = false; gateFx = null; gateSlowed = [false,false,false,false]; warpFx = []; simT = 0; finished = []; raceReal = 0; podium = []; order = []; lastLive = '';
+  started = false; winner = null; winners = []; provisional = []; lastLeader = null; finalStart = -1; finalPhase = 0; phaseT = 0; evDone = 0; secondBreak = false; gateFx = null; gateSlowed = [false,false,false,false]; warpFx = []; simT = 0; finished = []; raceReal = 0; raceT = 0; podium = []; order = []; lastLive = '';
   gateCount = [0,0,0,0]; gateFirst = [null,null,null,null];
   if (startGate) startGate.off = false;
   $('#ranking').innerHTML = ''; $('#winner').hidden = true; confetti = [];
@@ -929,12 +937,30 @@ function declare(list){
 }
 
 /* ───────── 조작 ───────── */
-let speed = 1;
-$('#speed').addEventListener('click', e => {
-  const b = e.target.closest('button'); if (!b) return;
-  speed = +b.dataset.s;
-  $('#speed').querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+/* 진행 속도: 1x = 기본(약 45초). 팀 피드백으로 이전보다 3배 느리게 맞춤 */
+const BASE_PACE = 1/3, BASE_SECONDS = 45;
+let userSpeed = 1, speed = BASE_PACE;
+function setSpeed(v, announce){
+  userSpeed = Math.max(.25, Math.min(3, Math.round(v*4)/4));
+  speed = BASE_PACE*userSpeed;
+  $('#speedRange').value = userSpeed;
+  $('#speedOut').textContent = (Number.isInteger(userSpeed) ? userSpeed : userSpeed.toFixed(2).replace(/0$/,'')) + 'x';
+  $('#speedRange').title = `한 판 약 ${Math.round(BASE_SECONDS/userSpeed)}초`;
+  try { localStorage.setItem('bni-roulette-speed', String(userSpeed)); } catch(e){}
+  if (announce) toast(`속도 <em>${$('#speedOut').textContent}</em> · 한 판 약 ${Math.round(BASE_SECONDS/userSpeed)}초`);
+}
+$('#speedRange').addEventListener('input', e => setSpeed(+e.target.value));
+$('#speedRange').addEventListener('change', e => setSpeed(+e.target.value, true));
+$('#slower').onclick = () => setSpeed(userSpeed - .25, true);
+$('#faster').onclick = () => setSpeed(userSpeed + .25, true);
+document.addEventListener('keydown', e => {
+  const t = e.target;
+  if ((t && t.closest && t.closest('textarea, input[type="number"], select')) || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (e.key === '-' || e.key === '_') { setSpeed(userSpeed - .25, true); e.preventDefault(); }
+  else if (e.key === '+' || e.key === '=') { setSpeed(userSpeed + .25, true); e.preventDefault(); }
+  else if (e.key === '0') { setSpeed(1, true); e.preventDefault(); }
 });
+try { const v = parseFloat(localStorage.getItem('bni-roulette-speed')); setSpeed(v > 0 ? v : 1); } catch(e){ setSpeed(1); }
 $('#startBtn').onclick = () => {
   if (started && !winner) return;
   if (winner) rebuild();
@@ -1029,7 +1055,7 @@ function brickHit(b, v){
   if (finalPhase < 2 || winner) return;
   b.hp -= v < -300 ? 2 : 1;
   // 두드리기 시작 직후엔 깨지지 않게(최소 1.4초는 엎치락뒤치락)
-  if (finalPhase === 2 && (raceReal - phaseT)*speed < 1.4) b.hp = Math.max(1, b.hp);
+  if (finalPhase === 2 && (raceT - phaseT) < 1.4) b.hp = Math.max(1, b.hp);
   if (b.hp <= 0) breakBrick(b);
 }
 function weakestBrick(){
@@ -1042,7 +1068,7 @@ function breakBrick(b, quiet){
   b.off = true; b.hp = 0;
   for (let i = 0; i < 18; i++) debris.push({x: b.ax + Math.random()*(b.bx-b.ax), y: b.ay, vx:(Math.random()-.5)*260, vy:-Math.random()*240, l:1});
   if (!quiet) toast(`"${b.label}" 벽돌 격파! 길이 열렸습니다`);
-  if (finalPhase === 2) { finalPhase = 3; phaseT = raceReal; flashFinal('open'); finalEvent('open', b); }
+  if (finalPhase === 2) { finalPhase = 3; phaseT = raceT; flashFinal('open'); finalEvent('open', b); }
 }
 /* FINAL 역전 이벤트: 벽돌 위 구슬 중 무작위(구슬 1개당 같은 확률) 하나를 내리꽂거나 다 같이 튀어 오르게 함 */
 function finalEvent(i, brick){
@@ -1098,8 +1124,6 @@ function updateCamera(){
   const now = performance.now();
   const mode = $('#rankMode').value;
   if (focus) {
-    if (mode !== 'last' && focus.y > FINISH-110) slow = .45;
-    if (mode === 'last' && marbles.length - finished.length <= 2 && focus.y > FINISH-180) slow = .45;
   }
   const runners = podium.map(p => p.m).filter(m => !m.done);
   const lead = mode === 'last' ? focus : (focus || runners[0]);
@@ -1108,29 +1132,28 @@ function updateCamera(){
     for (let g = 0; g < 4; g++) {
       if (!gateSlowed[g] && lead.y > GATES[g].y - 70) {
         gateSlowed[g] = true;
-        if (g < 3 && lead.y < GATES[g].y + 40 && raceReal*speed < HURRY_AT - .5) { gateFx = {g, t0: now, until: now + GATE_SLOW_MS}; flashGate(g, lead); }
+        if (g < 3 && lead.y < GATES[g].y + 40) flashGate(g, lead);
         if (GATES[g].key === 'referral') comeback(g, lead);
       }
     }
   }
   // 마지막 관문(교육)을 지나면 결승까지 긴 슬로모션 = 역전 구간
   if (started && !winner) {
-    const rt = raceReal*speed, pt = (raceReal - phaseT)*speed;
-    if (finalPhase === 0 && lead && lead.y > BRICK_Y - 60) { finalPhase = 1; phaseT = raceReal; flashFinal(lead); }
+    const rt = raceT, pt = (raceT - phaseT);
+    if (finalPhase === 0 && lead && lead.y > BRICK_Y - 60) { finalPhase = 1; phaseT = raceT; flashFinal(lead); }
     else if (finalPhase === 1) {
       const pool = marbles.reduce((n,m) => n + (!m.done && m.y > BRICK_Y-260 && m.y < BRICK_Y ? 1 : 0), 0);
       const need = Math.max(3, Math.min(14, Math.ceil(marbles.length*.12)));
-      if (pool >= need || pt > GATHER_MAX || rt > HARD_STOP - 4.6) { finalPhase = 2; phaseT = raceReal; evDone = 0; toast('두드려라! 초대 벽돌 깨기 시작'); }
+      if (pool >= need || pt > GATHER_MAX) { finalPhase = 2; phaseT = raceT; evDone = 0; toast('두드려라! 초대 벽돌 깨기 시작'); }
     } else if (finalPhase === 2) {
       if (evDone < SCRAMBLE_EVENTS.length && pt > SCRAMBLE_EVENTS[evDone]) { finalEvent(evDone); evDone++; }
-      if (pt > SCRAMBLE || (rt > HARD_STOP - 3.0 && pt > .8)) breakBrick(weakestBrick());
+      if (pt > SCRAMBLE) breakBrick(weakestBrick());
     } else if (finalPhase === 3 && !secondBreak && pt > .9) { secondBreak = true; breakBrick(weakestBrick()); }
   }
   if (started && winner && bricks.some(b => !b.off) && now - clearT > 400) { clearT = now; breakBrick(weakestBrick(), true); }
   finalZone = !!(started && !winner && finalPhase > 0);
   $('#stage').classList.toggle('final', finalZone);
   const inGate = gateFx && now < gateFx.until;
-  if (inGate) slow = Math.min(slow, GATE_SLOW);
   // 선두와 바로 뒤 경쟁자만 화면에 담아 크게 보여줌
   let tz = 1, tx = 300, ty = null;
   if (started && !winner && lead) {
@@ -1248,7 +1271,7 @@ function draw(){
     if (b.flash > .05) { ctx.fillStyle = `rgba(255,255,255,${b.flash*.6})`; rr(x+1, BRICK_Y-9, w-2, 18, 4); ctx.fill(); }
     if (k < .7) { ctx.strokeStyle = 'rgba(0,0,0,.45)'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.moveTo(x+w*.3, BRICK_Y-9); ctx.lineTo(x+w*.38, BRICK_Y-1); ctx.lineTo(x+w*.32, BRICK_Y+9); if (k < .4) { ctx.moveTo(x+w*.7, BRICK_Y-9); ctx.lineTo(x+w*.62, BRICK_Y); ctx.lineTo(x+w*.7, BRICK_Y+9); } ctx.stroke(); }
     ctx.fillStyle = '#FFFFFF'; ctx.font = `800 11px "${S.label}", sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText(`${b.label} ${'●'.repeat(Math.max(0,b.hp))}`.slice(0, 12), x + w/2, BRICK_Y + .5);
+    ctx.fillText(`${b.label} ${Math.max(0,b.hp)}`, x + w/2, BRICK_Y + .5);
   }
   debris = debris.filter(d => (d.l -= .02) > 0);
   for (const d of debris) { d.vy += 14; d.x += d.vx/60; d.y += d.vy/60; ctx.globalAlpha = d.l; ctx.fillStyle = S.rotor; ctx.fillRect(d.x-3, d.y-3, 6, 6); }
@@ -1359,15 +1382,16 @@ function draw(){
   if (podium.length) { labelSet = labelSet.filter(m => !medalOf.has(m)); podium.forEach(p => { if (!p.m.done) labelSet.push(p.m); }); }
   const fs = 11.5; ctx.font = `700 ${fs}px "${S.label}", sans-serif`; ctx.textBaseline = 'middle';
   for (const m of labelSet) {
-    const mi0 = medalOf.get(m), K = mi0 === 0 ? 1.45 : mi0 != null ? 1.18 : 1;
+    // 이름표 높이 = 공 지름(최소 18px), 이름표 아래 끝이 공의 절반 높이에 오도록
+    const G = Math.max(1.15, 2*R*scale/16), mi0 = medalOf.get(m), K = G*(mi0 === 0 ? 1.15 : mi0 != null ? 1.06 : 1);
     ctx.globalAlpha = spot && mi0 == null ? .6 : 1;
     ctx.font = `700 ${fs}px "${S.label}", sans-serif`;
     let tw0 = widthCache.get(m.p.name); if (tw0 == null) { tw0 = ctx.measureText(m.p.name).width; widthCache.set(m.p.name, tw0); }
     const tw = tw0*K;
-    const px = ox + m.x*scale, py = oy + m.y*scale - R*scale - 11*K - (mi0 === 0 ? 6 : 0);
+    const px = ox + m.x*scale, py = oy + m.y*scale - 8*K;
     const bw = 22*K, h = 16*K, total = bw + tw + 12*K, x0 = px - total/2, y0 = py - h/2;
     const t = TL[m.p.light];
-    ctx.fillStyle = t ? t.bg : S.chip; rr(x0, y0, total, h, 8); ctx.fill();
+    ctx.fillStyle = t ? t.bg : S.chip; rr(x0, y0, total, h, h/2); ctx.fill();
     if (S.outline) { ctx.lineWidth = 1.5; ctx.strokeStyle = S.olColor; ctx.stroke(); }
     ctx.fillStyle = '#FFFFFF'; rr(x0+1.5, y0+1.5, bw-1.5, h-3, [6.5*K,2,2,6.5*K]); ctx.fill();
     ctx.fillStyle = '#CF2030'; ctx.font = `800 ${7.5*K}px "${S.label}", sans-serif`; ctx.textAlign = 'center';
@@ -1381,7 +1405,7 @@ function draw(){
       ctx.fillStyle = '#1A1A1A'; ctx.font = `800 ${10*K}px "${S.label}", sans-serif`; ctx.textAlign = 'center';
       ctx.fillText(String(podium[mi0].rank), x0 - rM - 2, py+.5);
       if (mi0 === 0) {
-        const cx = px, cy = y0 - 9, cw2 = 22;
+        const cx = px, cy = y0 - 9*K/G, cw2 = 22*K/G;
         ctx.fillStyle = MEDAL[0]; ctx.strokeStyle = 'rgba(0,0,0,.45)'; ctx.lineWidth = 1.2;
         ctx.beginPath(); ctx.moveTo(cx-cw2/2, cy+6); ctx.lineTo(cx-cw2/2, cy-5); ctx.lineTo(cx-cw2/4, cy+1); ctx.lineTo(cx, cy-8);
         ctx.lineTo(cx+cw2/4, cy+1); ctx.lineTo(cx+cw2/2, cy-5); ctx.lineTo(cx+cw2/2, cy+6); ctx.closePath(); ctx.fill(); ctx.stroke();
@@ -1433,17 +1457,13 @@ let last = performance.now(), acc = 0;
 function frame(now){
   const raw = Math.min(.5, Math.max(0, (now - last)/1000)); last = now;
   const el = Math.min(raw, .1);
-  if (started && !winner) raceReal += raw;
+  if (started && !winner) { raceReal += raw; raceT += raw*speed; }
   updateCamera();
-  const rt = raceReal*speed;
-  const hurry = !started || winner ? 1 : rt > HARD_STOP ? 8 : (!finalZone && rt > HURRY_AT) ? 1 + (rt - HURRY_AT)*1.5 : 1;
-  let rate;
-  if (hurry > 1) rate = TIME_BASE*hurry;
-  else if (winner) rate = TIME_BASE*3;  // 당첨 후엔 뒤에서 나머지 순위를 빠르게 마저 매김
-  else if (finalPhase === 1) rate = GATHER_RATE;  // 대기실에 모이는 동안은 빨리감기
-  else if (finalPhase === 2) rate = SCRAMBLE_RATE;
-  else if (finalPhase === 3) { const pt = (raceReal - phaseT)*speed; rate = pt < RELEASE_HOLD ? RELEASE_RATE : Math.min(TIME_BASE, RELEASE_RATE + (pt - RELEASE_HOLD)*2.5); }
-  else rate = TIME_BASE*slow;
+  const rt = raceT;
+  let rate = TIME_BASE;
+  if (winner) rate = TIME_BASE*2;                 // 당첨 화면 뒤에서 나머지 순위를 마저 매김
+  else if (finalPhase >= 2) rate = TIME_BASE*FINAL_PACE;
+  if (started && !winner && rt > SAFETY) rate *= 2; // 어딘가 걸려 너무 길어질 때만
   acc += el * speed * rate;
   let n = 0;
   while (acc >= DT && n < 320) { step(DT); acc -= DT; n++; }
